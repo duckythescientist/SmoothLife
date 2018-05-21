@@ -13,7 +13,7 @@ So far I have the discrete time step version working well. I wasn't happy with t
 
 ## What is this "Game of Life"?
 
-There is [a bunch of information on the internet](http://lmgtfy.com/?q=Conway%27s+game+of+life) about Conway's Game of Life (GoL), and if you haven't heard of it before, I suggest you lean about it because it'll make the rest of this make a lot more sense.
+There is [a bunch of information on the internet](http://lmgtfy.com/?q=Conway%27s+game+of+life) about Conway's Game of Life (GoL), and if you haven't heard of it before, I suggest you learn about it because it'll make the rest of this make a lot more sense.
 
 I'll start with a quick recap. GoL is a specific cellular automata. Imagine a 2D grid of cells (think graph paper). Each cell is either alive or dead at any moment in time. At each next moment in time, a cell can change state or stay the same. Because this is a 2D square grid. Each cell has a total of 8 neighbor cells. If a cell is alive and it has 2 or 3 live neighbors, it will stay alive. If it has fewer than 2 live neighbors, it'll die off of loneliness. If it has more than 3 live neighbors, it'll die off from being overcrowded. If a dead cell has exactly 3 live neighbors, it will come alive.
 
@@ -76,9 +76,9 @@ And to make things easier, let's scale this number from 0.0 to 1.0 with 0.0 bein
 
 We still have some discreteness that would be best made smooth. In GoL, the decision for a cell to be alive or dead next generation is with hard rules. Comparison with 2 and 3. Let's apply the logistic function to this transition. 
 
-Using the values from the paper, use a logistic around 0.5 to determine aliveness of the local cell. If the local cell is alive, if the neghbors are between 0.267 and 0.445 then keep the cell alive. If the local cell is dead and the neighbors are between 0.278 and 0.365 then make the cell alive. These transitions are fuzzy and all done with logistics and linear interpolation. 
+Using the values from the paper, use a logistic around 0.5 to determine aliveness of the local cell. If the local cell is alive, if the neighbors are between 0.267 and 0.445 then keep the cell alive. If the local cell is dead and the neighbors are between 0.278 and 0.365 then make the cell alive. These transitions are fuzzy and all done with logistics and linear interpolation. 
 
-[This article](https://0fps.net/2012/11/19/conways-game-of-life-for-curved-surfaces-part-1/) probably did a better job of explanining it, and he used pictures, but he went deeper into the math. 
+[This article](https://0fps.net/2012/11/19/conways-game-of-life-for-curved-surfaces-part-1/) probably did a better job of explaining it, and he used pictures, but he went deeper into the math. 
 
 
 ### Smooth Time Steps
