@@ -21,6 +21,8 @@ I'll start with a quick recap. GoL is a specific cellular automata. Imagine a 2D
 
 There is _quite a lot_ of interesting behavior that can come of this very simple rule set.
 
+Another of my GoL projects can be found [here - GoL in 9 lines of horribly obfuscated C](https://github.com/duckythescientist/obfuscatedLife).
+
 ## SmoothLife
 
 GoL operates on a discrete grid and discrete time steps. Cells have very specific boundaries and they are blocky. Each "moment" in time is a hard transition from the previous state to the next state. What if there were a way to make GoL continuous or smooth.
