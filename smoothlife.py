@@ -85,7 +85,7 @@ def logistic2d(size, radius, roll=True, logres=None):
     """
     y, x = size
     # Get coordinate values of each point
-    xx, yy = np.mgrid[:x, :y]
+    yy, xx = np.mgrid[:y, :x]
     # Distance between each point and the center
     radiuses = np.sqrt((xx - x/2)**2 + (yy - y/2)**2)
     # Scale factor for the transition width
