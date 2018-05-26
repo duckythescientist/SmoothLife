@@ -21,7 +21,6 @@ import math
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import animation
-from scipy.misc import imshow
 
 # # Necessary for writing video
 # from skvideo.io import FFmpegWriter
