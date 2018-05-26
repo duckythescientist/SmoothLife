@@ -208,9 +208,10 @@ class SmoothLife:
         updating instead of discrete because continuous tends to converge.
         """
         if count is None:
-            # count = 200 worked well for a 128x128 grid
-            # scale according to area
+            # count = 200 worked well for a 128x128 grid and INNER_RADIUS 7
+            # scale according to area and INNER_RADIUS
             count = 200 * (self.width * self.height) / (128 * 128)
+            count *= (7.0 / self.multipliers.INNER_RADIUS) ** 2
             count = int(count)
         for i in range(count):
             radius = int(self.multipliers.INNER_RADIUS)
