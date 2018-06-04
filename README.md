@@ -140,6 +140,9 @@ If we use a Fast Fourier Transform (FFT), this gives us a lot of speedup. For yo
 * Python 3 (2.7+ may work, but shame on you for using deprecated software)
 * `numpy`
 * `matplotlib`
+* `python3-tk`
+
+`apt install python3 python3-tk python3-pip`
 
 `pip3 install numpy matplotlib`
 
