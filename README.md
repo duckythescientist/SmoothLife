@@ -4,6 +4,8 @@
 
 Written in Python using `numpy` and explained (hopefully) without too much fancy math.
 
+Also checkout the [Android version](https://github.com/duckythescientist/SmoothLifeAndroid) (available on the [Play Store](https://play.google.com/store/apps/details?id=ninja.duck.smoothlife))
+
 ![SmoothLife](img/smoothlife.gif)
 
 So far I have the discrete time step version working well. I wasn't happy with the look of the continuous time solution, but it's in the source comments if you want to poke at it.
