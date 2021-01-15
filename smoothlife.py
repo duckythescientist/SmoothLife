@@ -29,11 +29,13 @@ from matplotlib import animation
 
 class Rules:
     # Birth range
-    B1 = 0.278
-    B2 = 0.365
+    B1 = 0.254
+    B2 = 0.312
+
     # Survival range
-    D1 = 0.267
-    D2 = 0.445
+    D1 = 0.340
+    D2 = 0.518
+
     # Sigmoid widths
     N = 0.028
     M = 0.147
@@ -42,33 +44,35 @@ class Rules:
     # B2 = 0.336
     # D1 = 0.365
     # D2 = 0.549
-    # N = 0.028
-    # M = 0.147
 
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)  # Set variables from constructor
 
     @staticmethod
-    def sigma(x, a, alpha):
-        """Logistic function on x
+    def hard(x, a):
+        """Hard function"""
+        return np.greater(x, a)
 
-        Transition around a with steepness alpha
-        """
-        return 1.0 / (1.0 + np.exp(-4.0 / alpha * (x - a)))
+    def sigma(self, x, y, m):
+        """Logistic function on x"""
+        return x * (1.0 - self.hard(m, 0.5)) + y * self.hard(m, 0.5)
+
+    @staticmethod
+    def linear(x, a, ea):
+        return np.clip((x - a) / ea + 0.5, 0, 1)
 
     def sigma2(self, x, a, b):
         """Logistic function on x between a and b"""
-        return self.sigma(x, a, self.N) * (1.0 - self.sigma(x, b, self.N))
+        return self.linear(x, a, self.N) * (1.0 - self.linear(x, b, self.N))
 
-    @staticmethod
-    def lerp(a, b, t):
-        """Linear intererpolate t:[0,1] from a to b"""
-        return (1.0 - t) * a + t * b
 
     def s(self, n, m):
         """State transition function"""
-        alive = self.sigma(m, 0.5, self.M)
-        return self.sigma2(n, self.lerp(self.B1, self.D1, alive), self.lerp(self.B2, self.D2, alive))
+        return self.sigma(
+            self.sigma2(n, self.B1, self.B2),
+            self.sigma2(n, self.D1, self.D2),
+            m
+        )
 
 
 def logistic2d(size, radius, roll=True, logres=None):
@@ -103,8 +107,8 @@ def logistic2d(size, radius, roll=True, logres=None):
 class Multipliers:
     """Kernel convulution for neighbor integral"""
 
-    INNER_RADIUS = 7.0
-    OUTER_RADIUS = INNER_RADIUS * 3.0
+    INNER_RADIUS = 4.0
+    OUTER_RADIUS = 12.0
 
     def __init__(self, size, inner_radius=INNER_RADIUS, outer_radius=OUTER_RADIUS):
         inner = logistic2d(size, inner_radius)
@@ -151,7 +155,6 @@ class SmoothLife:
 
         # Apply transition rules
         s = self.rules.s(N_buffer, M_buffer)
-        nextfield = s
 
         # Trying some things with smooth time stepping....
         # Not yet working well....
@@ -173,10 +176,10 @@ class SmoothLife:
         # dt = 0.1
         # nextfield = self.field + dt * delta
 
-        # mode = 0  # timestep mode (0 for discrete)
-        # dt = 0.9  # timestep
-        # # Apply timestep
-        # nextfield = self._step(mode, self.field, s, M_buffer, dt)
+        mode = 2  # timestep mode (0 for discrete)
+        dt = 0.1  # timestep
+        # Apply timestep
+        nextfield = self._step(mode, self.field, s, M_buffer, dt)
 
         self.field = np.clip(nextfield, 0, 1)
         return self.field
@@ -208,13 +211,10 @@ class SmoothLife:
         updating instead of discrete because continuous tends to converge.
         """
         if count is None:
-            # count = 200 worked well for a 128x128 grid and INNER_RADIUS 7
-            # scale according to area and INNER_RADIUS
-            count = 200 * (self.width * self.height) / (128 * 128)
-            count *= (7.0 / self.multipliers.INNER_RADIUS) ** 2
-            count = int(count)
+            count = int(self.width * self.height / ((self.multipliers.OUTER_RADIUS * 2) ** 2))
+
         for i in range(count):
-            radius = int(self.multipliers.INNER_RADIUS)
+            radius = int(self.multipliers.OUTER_RADIUS)
             r = np.random.randint(0, self.height - radius)
             c = np.random.randint(0, self.width - radius)
             self.field[r:r+radius, c:c+radius] = intensity
