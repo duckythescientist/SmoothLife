@@ -4,6 +4,8 @@
 
 Written in Python using `numpy` and explained (hopefully) without too much fancy math.
 
+Also checkout the [Android version](https://github.com/duckythescientist/SmoothLifeAndroid) (available on the [Play Store](https://play.google.com/store/apps/details?id=ninja.duck.smoothlife))
+
 ![SmoothLife](img/smoothlife.gif)
 
 [See here](https://arxiv.org/abs/1111.1567) for the original paper.
