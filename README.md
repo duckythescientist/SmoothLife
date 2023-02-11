@@ -6,8 +6,6 @@ Written in Python using `numpy` and explained (hopefully) without too much fancy
 
 ![SmoothLife](img/smoothlife.gif)
 
-So far I have the discrete time step version working well. I wasn't happy with the look of the continuous time solution, but it's in the source comments if you want to poke at it.
-
 [See here](https://arxiv.org/abs/1111.1567) for the original paper.
 
 
@@ -81,11 +79,11 @@ Using the values from the paper, use a logistic around 0.5 to determine alivenes
 [This article](https://0fps.net/2012/11/19/conways-game-of-life-for-curved-surfaces-part-1/) probably did a better job of explaining it, and he used pictures, but he went deeper into the math. 
 
 
-### Smooth Time Steps
+### Smooth Timesteps
 
-I'm not happy with this yet. I have some commented code, and there is a bunch of implementations (C/BASIC/GLShaders), but I didn't like the look of how mine was working. I'm open to ideas.
+There are a few methods to non-discretely transition. Refer to [Rafler's original paper](https://arxiv.org/abs/1111.1567) for some discussion.
 
-Currently, this is still a non-smooth thing in my SmoothLife. Time steps are discrete.
+Thank you to @tscheepers for fixing rules to make the smooth timestep modes work. There are now two different rule sets. `BasicRules` works best with the discrete timestep mode, and `SmoothTimestepRules` works best with the others. It's still worth mixing and matching to play around with. It's also worth trying different values for the rules.
 
 -------------------------
 

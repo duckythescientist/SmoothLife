@@ -4,8 +4,11 @@
 
 Re-written in Python using the speedups of Numpy
 
+Thank you to tscheepers for:
+    Fixing the initialization in add_speckles to be better at scaling.
+    Adding the rules and transition function that work with smooth timesteps.
+
 Todo:
-    Better integration methods
     Fancy UI
     Refactor. OO design always fails because of nested variable access
 
@@ -27,13 +30,15 @@ from matplotlib import animation
 # from matplotlib import cm
 
 
-class Rules:
+class BasicRules:
     # Birth range
     B1 = 0.278
     B2 = 0.365
+
     # Survival range
     D1 = 0.267
     D2 = 0.445
+
     # Sigmoid widths
     N = 0.028
     M = 0.147
@@ -68,7 +73,49 @@ class Rules:
     def s(self, n, m):
         """State transition function"""
         alive = self.sigma(m, 0.5, self.M)
-        return self.sigma2(n, self.lerp(self.B1, self.D1, alive), self.lerp(self.B2, self.D2, alive))
+        return self.sigma2(
+            n, self.lerp(self.B1, self.D1, alive), self.lerp(self.B2, self.D2, alive)
+        )
+
+
+class SmoothTimestepRules:
+    # Birth range
+    B1 = 0.254
+    B2 = 0.312
+
+    # Survival range
+    D1 = 0.340
+    D2 = 0.518
+
+    # Sigmoid widths
+    N = 0.028
+    M = 0.147
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)  # Set variables from constructor
+
+    @staticmethod
+    def hard(x, a):
+        """Hard function"""
+        return np.greater(x, a)
+
+    def sigma(self, x, y, m):
+        """Logistic function on x"""
+        return x * (1.0 - self.hard(m, 0.5)) + y * self.hard(m, 0.5)
+
+    @staticmethod
+    def linear(x, a, ea):
+        return np.clip((x - a) / ea + 0.5, 0, 1)
+
+    def sigma2(self, x, a, b):
+        """Logistic function on x between a and b"""
+        return self.linear(x, a, self.N) * (1.0 - self.linear(x, b, self.N))
+
+    def s(self, n, m):
+        """State transition function"""
+        return self.sigma(
+            self.sigma2(n, self.B1, self.B2), self.sigma2(n, self.D1, self.D2), m
+        )
 
 
 def logistic2d(size, radius, roll=True, logres=None):
@@ -86,7 +133,7 @@ def logistic2d(size, radius, roll=True, logres=None):
     # Get coordinate values of each point
     yy, xx = np.mgrid[:y, :x]
     # Distance between each point and the center
-    radiuses = np.sqrt((xx - x/2)**2 + (yy - y/2)**2)
+    radiuses = np.sqrt((xx - x / 2) ** 2 + (yy - y / 2) ** 2)
     # Scale factor for the transition width
     if logres is None:
         logres = math.log(min(*size), 2)
@@ -95,8 +142,8 @@ def logistic2d(size, radius, roll=True, logres=None):
         # but 1 / (1 + inf) == 0, so it's fine
         logistic = 1 / (1 + np.exp(logres * (radiuses - radius)))
     if roll:
-        logistic = np.roll(logistic, y//2, axis=0)
-        logistic = np.roll(logistic, x//2, axis=1)
+        logistic = np.roll(logistic, y // 2, axis=0)
+        logistic = np.roll(logistic, x // 2, axis=1)
     return logistic
 
 
@@ -126,16 +173,22 @@ class SmoothLife:
         self.height = height
 
         self.multipliers = Multipliers((height, width))
-        self.rules = Rules()
+
+        # BasicRules works best with mode=0, discrete.
+        # SmoothTimestepRules works best with other modes.
+
+        # self.rules = BasicRules()
+        self.rules = SmoothTimestepRules()
+        self.mode = 0  # timestep mode (0 for discrete)
+        self.dt = 0.1
 
         self.clear()
-        # self.esses = [None] * 3
-        # self.esses_count = 0
 
     def clear(self):
         """Zero out the field"""
         self.field = np.zeros((self.height, self.width))
-        # self.esses_count = 0
+        self.esses = [None] * 3
+        self.esses_count = 0
 
     def step(self):
         """Do timestep and return field"""
@@ -151,32 +204,9 @@ class SmoothLife:
 
         # Apply transition rules
         s = self.rules.s(N_buffer, M_buffer)
-        nextfield = s
 
-        # Trying some things with smooth time stepping....
-        # Not yet working well....
-        # s0 = s - M_buffer
-        # s1, s2, s3 = self.esses
-
-        # if self.esses_count == 0:
-        #     delta = s0
-        # elif self.esses_count == 1:
-        #     delta = (3 * s0 - s1) / 2
-        # elif self.esses_count == 2:
-        #     delta = (23 * s0 - 16 * s1 + 5 * s2) / 12
-        # else:  # self.esses_count == 3:
-        #     delta = (55 * s0 - 59 * s1 + 37 * s2 - 9 * s3) / 24
-
-        # self.esses = [s0] + self.esses[:-1]
-        # if self.esses_count < 3:
-        #     self.esses_count += 1
-        # dt = 0.1
-        # nextfield = self.field + dt * delta
-
-        # mode = 0  # timestep mode (0 for discrete)
-        # dt = 0.9  # timestep
-        # # Apply timestep
-        # nextfield = self._step(mode, self.field, s, M_buffer, dt)
+        # Apply timestep
+        nextfield = self._step(self.mode, self.field, s, M_buffer, self.dt)
 
         self.field = np.clip(nextfield, 0, 1)
         return self.field
@@ -185,41 +215,54 @@ class SmoothLife:
         """State transition options
 
         SmoothLifeAll/SmoothLifeSDL/shaders/snm2D.frag
+
+        Plus mode 5, but I don't remember where I got the math for it.
         """
         if mode == 0:  # Discrete time step
             return s
 
         # Or use a solution to the differential equation
         elif mode == 1:
-            return f + dt*(2*s - 1)
+            return f + dt * (2 * s - 1)
         elif mode == 2:
-            return f + dt*(s - f)
+            return f + dt * (s - f)
         elif mode == 3:
-            return m + dt*(2*s - 1)
+            return m + dt * (2 * s - 1)
         elif mode == 4:
-            return m + dt*(s - m)
+            return m + dt * (s - m)
+        elif mode == 5:
+            s0 = s - m
+            s1, s2, s3 = self.esses
+            if self.esses_count == 0:
+                delta = s0
+            elif self.esses_count == 1:
+                delta = (3 * s0 - s1) / 2
+            elif self.esses_count == 2:
+                delta = (23 * s0 - 16 * s1 + 5 * s2) / 12
+            else:  # self.esses_count == 3:
+                delta = (55 * s0 - 59 * s1 + 37 * s2 - 9 * s3) / 24
+            self.esses = [s0] + self.esses[:-1]
+            if self.esses_count < 3:
+                self.esses_count += 1
+            return f + dt * delta
 
     def add_speckles(self, count=None, intensity=1):
         """Populate field with random living squares
 
         If count unspecified, do a moderately dense fill
-
-        I suggest using a smaller count when using continuous time
-        updating instead of discrete because continuous tends to converge.
         """
+
         if count is None:
-            # count = 200 worked well for a 128x128 grid and INNER_RADIUS 7
-            # scale according to area and INNER_RADIUS
-            count = 200 * (self.width * self.height) / (128 * 128)
-            count *= (7.0 / self.multipliers.INNER_RADIUS) ** 2
-            count = int(count)
+            count = int(
+                self.width * self.height / ((self.multipliers.OUTER_RADIUS * 2) ** 2)
+            )
         for i in range(count):
-            radius = int(self.multipliers.INNER_RADIUS)
+            radius = int(self.multipliers.OUTER_RADIUS)
+            # radius = int(self.multipliers.INNER_RADIUS)
             r = np.random.randint(0, self.height - radius)
             c = np.random.randint(0, self.width - radius)
-            self.field[r:r+radius, c:c+radius] = intensity
+            self.field[r : r + radius, c : c + radius] = intensity
         # self.esses_count = 0
-
 
 
 def show_animation():
@@ -233,12 +276,13 @@ def show_animation():
 
     fig = plt.figure()
     # Nice color maps: viridis, plasma, gray, binary, seismic, gnuplot
-    im = plt.imshow(sl.field, animated=True,
-                    cmap=plt.get_cmap("viridis"), aspect="equal")
+    im = plt.imshow(
+        sl.field, animated=True, cmap=plt.get_cmap("viridis"), aspect="equal"
+    )
 
     def animate(*args):
         im.set_array(sl.step())
-        return (im, )
+        return (im,)
 
     ani = animation.FuncAnimation(fig, animate, interval=60, blit=True)
     plt.show()
@@ -274,6 +318,6 @@ def save_animation():
     # ffmpeg -i smoothlife.mp4 -c:v libvpx -b:v 2M smoothlife.webm
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     show_animation()
     # save_animation()
