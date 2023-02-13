@@ -4,6 +4,13 @@
 
 Re-written in Python using the speedups of Numpy
 
+Notes on porting:
+    Raffler's original paper uses M to represent the inner cell area
+    and N to represent the outer cell area.
+
+    `BasicRules` is simplified and has some good comments.
+    `ExtensiveRules` is much more extensive but a little harder to follow.
+
 Thank you to tscheepers for:
     Fixing the initialization in add_speckles to be better at scaling.
     Adding the rules and transition function that work with smooth timesteps.
@@ -13,10 +20,11 @@ Todo:
     Refactor. OO design always fails because of nested variable access
 
 Explanations and code (in other language) here:
-https://0fps.net/2012/11/19/conways-game-of-life-for-curved-surfaces-part-1/
 https://arxiv.org/pdf/1111.1567.pdf
+https://0fps.net/2012/11/19/conways-game-of-life-for-curved-surfaces-part-1/
 https://jsfiddle.net/mikola/aj2vq/
 https://www.youtube.com/watch?v=KJe9H6qS82I
+https://sourceforge.net/projects/smoothlife/
 """
 
 import math
@@ -28,6 +36,68 @@ from matplotlib import animation
 # # Necessary for writing video
 # from skvideo.io import FFmpegWriter
 # from matplotlib import cm
+
+
+def logistic_threshold(x, x0, alpha):
+    """Logistic function on x around x0 with transition width alpha
+
+    Approximately:
+        (x - alpha/2) < x0 : 0
+        (x + alpha/2) > x0 : 1
+
+    AKA snm2D.frag:func_smooth
+    """
+    return 1.0 / (1.0 + np.exp(-4.0 / alpha * (x - x0)))
+
+
+def hard_threshold(x, x0):
+    """x > x0 : 1 ? 0
+
+    AKA snm2D.frag:func_hard
+    """
+    return np.greater(x, x0)
+
+
+def linearized_threshold(x, x0, alpha):
+    """Threshold x around x0 with a linear transition region alpha
+
+    AKA snm2D.frag:func_linear
+    """
+    return np.clip((x - x0) / alpha + 0.5, 0, 1)
+
+
+def logistic_interval(x, a, b, alpha):
+    """Logistic function on x between a and b with transition width alpha
+
+    Very approximately:
+        x < a     : 0
+        a < x < b : 1
+        x > b     : 0
+
+    AKA snm2D.frag:sigmoid_ab with sigtype==4
+    """
+    return logistic_threshold(x, a, alpha) * (1.0 - logistic_threshold(x, b, alpha))
+
+
+def linearized_interval(x, a, b, alpha):
+    """Function a<x<b with linearized threshold regions
+
+    Very approximately:
+        x < a     : 0
+        a < x < b : 1
+        x > b     : 0
+
+    AKA snm2D.frag:sigmoid_ab with sigtype==1
+    """
+    return linearized_threshold(x, a, alpha) * (1.0 - linearized_threshold(x, b, alpha))
+
+
+def lerp(a, b, t):
+    """Linear intererpolate from a to b with t ranging [0,1]
+
+    AKA: OpenGL mix
+    """
+    return (1.0 - t) * a + t * b
 
 
 class BasicRules:
@@ -43,42 +113,37 @@ class BasicRules:
     N = 0.028
     M = 0.147
 
-    # B1 = 0.257
-    # B2 = 0.336
-    # D1 = 0.365
-    # D2 = 0.549
-    # N = 0.028
-    # M = 0.147
-
     def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)  # Set variables from constructor
-
-    @staticmethod
-    def sigma(x, a, alpha):
-        """Logistic function on x
-
-        Transition around a with steepness alpha
-        """
-        return 1.0 / (1.0 + np.exp(-4.0 / alpha * (x - a)))
-
-    def sigma2(self, x, a, b):
-        """Logistic function on x between a and b"""
-        return self.sigma(x, a, self.N) * (1.0 - self.sigma(x, b, self.N))
-
-    @staticmethod
-    def lerp(a, b, t):
-        """Linear intererpolate t:[0,1] from a to b"""
-        return (1.0 - t) * a + t * b
+        for k, v in kwargs.items():
+            if hasattr(self, k):
+                setattr(self, k, v)
+            else:
+                raise ValueError("Unexpected attribute %s" % k)
 
     def s(self, n, m):
-        """State transition function"""
-        alive = self.sigma(m, 0.5, self.M)
-        return self.sigma2(
-            n, self.lerp(self.B1, self.D1, alive), self.lerp(self.B2, self.D2, alive)
-        )
+        """State transition function
+
+        This corresponds to SmoothLifeSDL with:
+            sigmode: 4
+            sigtype: 4
+            mixtype: 4
+        """
+        # Convert the local cell average `m` to a metric of how alive the local cell is.
+        # We transition around 0.5 (0 is fully dead and 1 is fully alive).
+        # The transition width is set by `self.M`
+        aliveness = logistic_threshold(m, 0.5, self.M)
+        # A fully dead cell will become alive if the neighbor density is between B1 and B2.
+        # A fully alive cell will stay alive if the neighhbor density is between D1 and D2.
+        # Interpolate between the two sets of thresholds depending on how alive/dead the cell is.
+        threshold1 = lerp(self.B1, self.D1, aliveness)
+        threshold2 = lerp(self.B2, self.D2, aliveness)
+        # Now with the smoothness of `logistic_interval` determine if the neighbor density is
+        # inside of the threshold to stay/become alive.
+        new_aliveness = logistic_interval(n, threshold1, threshold2, self.N)
+        return new_aliveness
 
 
-class SmoothTimestepRules:
+class SmoothTimestepRules(BasicRules):
     # Birth range
     B1 = 0.254
     B2 = 0.312
@@ -87,38 +152,73 @@ class SmoothTimestepRules:
     D1 = 0.340
     D2 = 0.518
 
-    # Sigmoid widths
-    N = 0.028
-    M = 0.147
-
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)  # Set variables from constructor
-
-    @staticmethod
-    def hard(x, a):
-        """Hard function"""
-        return np.greater(x, a)
-
-    def sigma(self, x, y, m):
-        """Logistic function on x"""
-        return x * (1.0 - self.hard(m, 0.5)) + y * self.hard(m, 0.5)
-
-    @staticmethod
-    def linear(x, a, ea):
-        return np.clip((x - a) / ea + 0.5, 0, 1)
-
-    def sigma2(self, x, a, b):
-        """Logistic function on x between a and b"""
-        return self.linear(x, a, self.N) * (1.0 - self.linear(x, b, self.N))
-
     def s(self, n, m):
-        """State transition function"""
-        return self.sigma(
-            self.sigma2(n, self.B1, self.B2), self.sigma2(n, self.D1, self.D2), m
+        """State transition function
+
+        This corresponds to SmoothLifeSDL with:
+            sigmode: 2
+            sigtype: 1
+            mixtype: 0
+        """
+        aliveness = hard_threshold(m, 0.5)
+
+        return np.where(
+            aliveness,
+            linearized_interval(n, self.D1, self.D2, self.N),
+            linearized_interval(n, self.B1, self.B2, self.N),
         )
 
 
-def logistic2d(size, radius, roll=True, logres=None):
+class ExtensiveRules(BasicRules):
+    """Rules from Rafler's SmoothLifeSDL snm2D.frag"""
+
+    sigmode = 0
+    sigtype = 0
+    mixtype = 0
+
+    def sigmoid_ab(self, x, a, b):
+        if self.sigtype == 0:
+            return hard_threshold(x, a) * (1 - hard_threshold(x, b))
+        elif self.sigtype == 1:
+            return linearized_interval(x, a, b, self.N)
+        elif self.sigtype == 4:
+            return logistic_interval(x, a, b, self.N)
+        else:
+            raise NotImplementedError
+
+    def sigmoid_mix(self, x, y, m):
+        if self.mixtype == 0:
+            intermediate = hard_threshold(m, 0.5)
+        elif self.mixtype == 1:
+            intermediate = linearized_threshold(m, 0.5, self.M)
+        elif self.mixtype == 4:
+            intermediate = logistic_threshold(m, 0.5, self.M)
+        else:
+            raise NotImplementedError
+        return lerp(x, y, intermediate)
+
+    def s(self, n, m):
+        if self.sigmode == 1:
+            b_thresh = self.sigmoid_ab(n, self.B1, self.B2)
+            d_thresh = self.sigmoid_ab(n, self.D1, self.D2)
+            return lerp(b_thresh, d_thresh, m)
+        elif self.sigmode == 2:
+            b_thresh = self.sigmoid_ab(n, self.B1, self.B2)
+            d_thresh = self.sigmoid_ab(n, self.D1, self.D2)
+            return self.sigmoid_mix(b_thresh, d_thresh, m)
+        elif self.sigmode == 3:
+            threshold1 = lerp(self.B1, self.D1, m)
+            threshold2 = lerp(self.B2, self.D2, m)
+            return self.sigmoid_ab(n, threshold1, threshold2)
+        elif self.sigmode == 4:
+            threshold1 = self.sigmoid_mix(self.B1, self.D1, m)
+            threshold2 = self.sigmoid_mix(self.B2, self.D2, m)
+            return self.sigmoid_ab(n, threshold1, threshold2)
+        else:
+            raise NotImplementedError
+
+
+def antialiased_circle(size, radius, roll=True, logres=None):
     """Create a circle with blurred edges
 
     Set roll=False to have the circle centered in the middle of the
@@ -154,8 +254,8 @@ class Multipliers:
     OUTER_RADIUS = INNER_RADIUS * 3.0
 
     def __init__(self, size, inner_radius=INNER_RADIUS, outer_radius=OUTER_RADIUS):
-        inner = logistic2d(size, inner_radius)
-        outer = logistic2d(size, outer_radius)
+        inner = antialiased_circle(size, inner_radius)
+        outer = antialiased_circle(size, outer_radius)
         annulus = outer - inner
 
         # Scale each kernel so the sum is 1
@@ -178,7 +278,16 @@ class SmoothLife:
         # SmoothTimestepRules works best with other modes.
 
         # self.rules = BasicRules()
-        self.rules = SmoothTimestepRules()
+        # self.rules = SmoothTimestepRules()
+        # self.rules = ExtensiveRules(
+        #     B1=0.254, B2=0.312, D1=0.340, D2=0.518,
+        #     sigmode=2,
+        #     sigtype=1,
+        #     mixtype=0)
+        self.rules = ExtensiveRules(
+            B1=0.278, B2=0.365, D1=0.267, D2=0.445, sigmode=4, sigtype=4, mixtype=4
+        )
+
         self.mode = 0  # timestep mode (0 for discrete)
         self.dt = 0.1
 
