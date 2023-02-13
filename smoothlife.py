@@ -13,7 +13,7 @@ Notes on porting:
 
 Thank you to tscheepers for:
     Fixing the initialization in add_speckles to be better at scaling.
-    Adding the rules and transition function that work with smooth timesteps.
+    Figuring out the rules and transition function that work with smooth timesteps.
 
 Todo:
     Fancy UI
@@ -120,7 +120,10 @@ class BasicRules:
             else:
                 raise ValueError("Unexpected attribute %s" % k)
 
-    def s(self, n, m):
+    def clear(self):
+        pass
+
+    def s(self, n, m, field):
         """State transition function
 
         This corresponds to SmoothLifeSDL with:
@@ -140,33 +143,8 @@ class BasicRules:
         # Now with the smoothness of `logistic_interval` determine if the neighbor density is
         # inside of the threshold to stay/become alive.
         new_aliveness = logistic_interval(n, threshold1, threshold2, self.N)
-        return new_aliveness
 
-
-class SmoothTimestepRules(BasicRules):
-    # Birth range
-    B1 = 0.254
-    B2 = 0.312
-
-    # Survival range
-    D1 = 0.340
-    D2 = 0.518
-
-    def s(self, n, m):
-        """State transition function
-
-        This corresponds to SmoothLifeSDL with:
-            sigmode: 2
-            sigtype: 1
-            mixtype: 0
-        """
-        aliveness = hard_threshold(m, 0.5)
-
-        return np.where(
-            aliveness,
-            linearized_interval(n, self.D1, self.D2, self.N),
-            linearized_interval(n, self.B1, self.B2, self.N),
-        )
+        return np.clip(new_aliveness, 0, 1)
 
 
 class ExtensiveRules(BasicRules):
@@ -175,6 +153,13 @@ class ExtensiveRules(BasicRules):
     sigmode = 0
     sigtype = 0
     mixtype = 0
+
+    timestep_mode = 0
+    dt = 0.1
+
+    # History for timestep_mode 5
+    esses = [None] * 3
+    esses_count = 0
 
     def sigmoid_ab(self, x, a, b):
         if self.sigtype == 0:
@@ -197,25 +182,75 @@ class ExtensiveRules(BasicRules):
             raise NotImplementedError
         return lerp(x, y, intermediate)
 
-    def s(self, n, m):
+    def clear(self):
+        self.esses = [None] * 3
+        self.esses_count = 0
+
+    def s(self, n, m, field):
         if self.sigmode == 1:
             b_thresh = self.sigmoid_ab(n, self.B1, self.B2)
             d_thresh = self.sigmoid_ab(n, self.D1, self.D2)
-            return lerp(b_thresh, d_thresh, m)
+            transition = lerp(b_thresh, d_thresh, m)
         elif self.sigmode == 2:
             b_thresh = self.sigmoid_ab(n, self.B1, self.B2)
             d_thresh = self.sigmoid_ab(n, self.D1, self.D2)
-            return self.sigmoid_mix(b_thresh, d_thresh, m)
+            transition = self.sigmoid_mix(b_thresh, d_thresh, m)
         elif self.sigmode == 3:
             threshold1 = lerp(self.B1, self.D1, m)
             threshold2 = lerp(self.B2, self.D2, m)
-            return self.sigmoid_ab(n, threshold1, threshold2)
+            transition = self.sigmoid_ab(n, threshold1, threshold2)
         elif self.sigmode == 4:
             threshold1 = self.sigmoid_mix(self.B1, self.D1, m)
             threshold2 = self.sigmoid_mix(self.B2, self.D2, m)
-            return self.sigmoid_ab(n, threshold1, threshold2)
+            transition = self.sigmoid_ab(n, threshold1, threshold2)
         else:
             raise NotImplementedError
+
+        if self.timestep_mode == 0:  # Discrete time step
+            nextfield = transition
+
+        # Or use a solution to the differential equation
+        elif self.timestep_mode == 1:
+            nextfield = field + self.dt * (2 * transition - 1)
+        elif self.timestep_mode == 2:
+            nextfield = field + self.dt * (transition - field)
+        elif self.timestep_mode == 3:
+            nextfield = m + self.dt * (2 * transition - 1)
+        elif self.timestep_mode == 4:
+            nextfield = m + self.dt * (transition - m)
+        elif self.timestep_mode == 5:
+            s0 = transition - m
+            s1, s2, s3 = self.esses
+            if self.esses_count == 0:
+                delta = s0
+            elif self.esses_count == 1:
+                delta = (3 * s0 - s1) / 2
+            elif self.esses_count == 2:
+                delta = (23 * s0 - 16 * s1 + 5 * s2) / 12
+            else:  # self.esses_count == 3:
+                delta = (55 * s0 - 59 * s1 + 37 * s2 - 9 * s3) / 24
+            self.esses = [s0] + self.esses[:-1]
+            if self.esses_count < 3:
+                self.esses_count += 1
+            nextfield = field + self.dt * delta
+
+        return np.clip(nextfield, 0, 1)
+
+
+class SmoothTimestepRules(ExtensiveRules):
+    # Birth range
+    B1 = 0.254
+    B2 = 0.312
+
+    # Survival range
+    D1 = 0.340
+    D2 = 0.518
+
+    sigmode = 2
+    sigtype = 1
+    mixtype = 0
+
+    timestep_mode = 2
 
 
 def antialiased_circle(size, radius, roll=True, logres=None):
@@ -274,30 +309,37 @@ class SmoothLife:
 
         self.multipliers = Multipliers((height, width))
 
-        # BasicRules works best with mode=0, discrete.
-        # SmoothTimestepRules works best with other modes.
-
-        # self.rules = BasicRules()
+        self.rules = BasicRules()
         # self.rules = SmoothTimestepRules()
-        # self.rules = ExtensiveRules(
-        #     B1=0.254, B2=0.312, D1=0.340, D2=0.518,
+        # self.rules = ExtensiveRules(  # BasicRules
+        #     B1=0.278,
+        #     B2=0.365,
+        #     D1=0.267,
+        #     D2=0.445,
+        #     sigmode=4,
+        #     sigtype=4,
+        #     mixtype=4,
+        #     timestep_mode=0,
+        #     dt=0,
+        # )
+        # self.rules = ExtensiveRules(  # SmoothTimestepRules
+        #     B1=0.254,
+        #     B2=0.312,
+        #     D1=0.340,
+        #     D2=0.518,
         #     sigmode=2,
         #     sigtype=1,
-        #     mixtype=0)
-        self.rules = ExtensiveRules(
-            B1=0.278, B2=0.365, D1=0.267, D2=0.445, sigmode=4, sigtype=4, mixtype=4
-        )
-
-        self.mode = 0  # timestep mode (0 for discrete)
-        self.dt = 0.1
+        #     mixtype=0,
+        #     timestep_mode=2,
+        #     dt=0.2,
+        # )
 
         self.clear()
 
     def clear(self):
         """Zero out the field"""
         self.field = np.zeros((self.height, self.width))
-        self.esses = [None] * 3
-        self.esses_count = 0
+        self.rules.clear()
 
     def step(self):
         """Do timestep and return field"""
@@ -312,66 +354,23 @@ class SmoothLife:
         N_buffer = np.real(np.fft.ifft2(N_buffer_))
 
         # Apply transition rules
-        s = self.rules.s(N_buffer, M_buffer)
-
-        # Apply timestep
-        nextfield = self._step(self.mode, self.field, s, M_buffer, self.dt)
-
-        self.field = np.clip(nextfield, 0, 1)
+        self.field = self.rules.s(N_buffer, M_buffer, self.field)
         return self.field
-
-    def _step(self, mode, f, s, m, dt):
-        """State transition options
-
-        SmoothLifeAll/SmoothLifeSDL/shaders/snm2D.frag
-
-        Plus mode 5, but I don't remember where I got the math for it.
-        """
-        if mode == 0:  # Discrete time step
-            return s
-
-        # Or use a solution to the differential equation
-        elif mode == 1:
-            return f + dt * (2 * s - 1)
-        elif mode == 2:
-            return f + dt * (s - f)
-        elif mode == 3:
-            return m + dt * (2 * s - 1)
-        elif mode == 4:
-            return m + dt * (s - m)
-        elif mode == 5:
-            s0 = s - m
-            s1, s2, s3 = self.esses
-            if self.esses_count == 0:
-                delta = s0
-            elif self.esses_count == 1:
-                delta = (3 * s0 - s1) / 2
-            elif self.esses_count == 2:
-                delta = (23 * s0 - 16 * s1 + 5 * s2) / 12
-            else:  # self.esses_count == 3:
-                delta = (55 * s0 - 59 * s1 + 37 * s2 - 9 * s3) / 24
-            self.esses = [s0] + self.esses[:-1]
-            if self.esses_count < 3:
-                self.esses_count += 1
-            return f + dt * delta
 
     def add_speckles(self, count=None, intensity=1):
         """Populate field with random living squares
 
         If count unspecified, do a moderately dense fill
         """
-
         if count is None:
             count = int(
                 self.width * self.height / ((self.multipliers.OUTER_RADIUS * 2) ** 2)
             )
         for i in range(count):
             radius = int(self.multipliers.OUTER_RADIUS)
-            # radius = int(self.multipliers.INNER_RADIUS)
             r = np.random.randint(0, self.height - radius)
             c = np.random.randint(0, self.width - radius)
             self.field[r : r + radius, c : c + radius] = intensity
-        # self.esses_count = 0
 
 
 def show_animation():
