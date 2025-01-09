@@ -4,7 +4,7 @@
 
 Written in Python using `numpy` and explained (hopefully) without too much fancy math.
 
-Also checkout the [Android version](https://github.com/duckythescientist/SmoothLifeAndroid) (available on the [Play Store](https://play.google.com/store/apps/details?id=ninja.duck.smoothlife))
+Also checkout the [Android version](https://github.com/duckythescientist/SmoothLifeAndroid)
 
 ![SmoothLife](img/smoothlife.gif)
 
